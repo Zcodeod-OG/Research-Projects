@@ -104,7 +104,7 @@ No large labelled public rail vibration dataset exists (searched Kaggle, Zenodo,
    python augment_vibration.py raw/acoustic_track_pk/<wheel_burnt dir>/*.wav --label wheel_burnt \
        --background windows/healthy.npz -o windows/wheel_burnt.npz   # needs matching sample rates
    ```
-2. **Label Rail-VIVID by position.** Match each CSV row's GPS to the 9 anomaly locations in its paper; each anomaly is passed in 20 runs at 4 speeds, giving ~180 labelled passes plus hours of healthy track.
+2. **Label Rail-VIVID by position.** Match each CSV row's GPS to the 9 anomaly locations in its paper; each anomaly is passed in 20 runs at 4 speeds, giving ~180 labelled passes plus over an hour of healthy track.
 3. **Pre-train on unlabelled data, fine-tune on labelled.** Rail-VIVID, draisine and Madrid–Barcelona signals are unlabelled but plentiful; self-supervised pre-training (masked-spectrogram or contrastive) on them, then fine-tuning on the small labelled sets, usually beats training from scratch. Pretrained audio models (AST, BEATs, PANNs) are another starting point.
 4. **Generate fault examples.** Once 1–3 are in place, train a diffusion model on fault spectrograms to synthesise extra rare-class samples. Validate that a classifier trained on synthetic + real beats real alone on a real-only test set.
 5. **Record your own.** Phone accelerometer + microphone (e.g. the free phyphox app, accelerometer typically 100–500 Hz depending on the phone, audio 44.1–48 kHz) on a train over known defects, noting GPS. The only route to audio, vibration and images of the *same* faults.
