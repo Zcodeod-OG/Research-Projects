@@ -5,11 +5,11 @@ Raw data is large and is never committed; raw/ is git-ignored.
 
 Usage:
     python download.py --list
-    python download.py rail_vivid_sample corrugation
+    python download.py rail_vivid_vibration corrugation
     python download.py all --dry-run
 
 Optional dependencies, only needed for the sources that use them:
-    pip install huggingface_hub   # rail_vivid, rail_vivid_sample
+    pip install huggingface_hub   # rail_vivid*
     pip install kaggle            # kaggle_track_faults (needs ~/.kaggle/kaggle.json)
     pip install gdown             # acoustic_track_pk
 """
@@ -46,23 +46,14 @@ def zenodo(record_id):
     return fetch
 
 
-def huggingface(repo_id, allow_patterns=None, first_run_only=False):
+def huggingface(repo_id, allow_patterns=None):
     def fetch(dest, dry_run):
-        from huggingface_hub import list_repo_files, snapshot_download
-        patterns = allow_patterns
-        if first_run_only:
-            # Keep top-level metadata plus the first run folder, so prototyping
-            # doesn't need the whole ~114 GB. Folder names come from the repo itself.
-            files = list_repo_files(repo_id, repo_type="dataset")
-            tops = sorted({f.split("/")[0] for f in files if "/" in f})
-            runs = [t for t in tops if "run" in t.lower()]
-            keep = [t for t in tops if t not in runs] + runs[:1]
-            patterns = [f for f in files if "/" not in f] + [f"{t}/*" for t in keep]
-        print(f"  hf dataset {repo_id} patterns={patterns or 'all'}")
+        print(f"  hf dataset {repo_id} patterns={allow_patterns or 'all'}")
         if dry_run:
             return
+        from huggingface_hub import snapshot_download
         snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=dest,
-                          allow_patterns=patterns)
+                          allow_patterns=allow_patterns)
     return fetch
 
 
@@ -103,12 +94,20 @@ def manual(url):
 
 # name -> (modality, description, fetcher). Details and licences are in README.md.
 SOURCES = {
-    "rail_vivid_sample": ("vibration+image", "Rail-VIVID, metadata + anomalies + first run only",
-                          huggingface("saluslab/Rail-VIVID", first_run_only=True)),
+    # Rail-VIVID runs are folders like AtoB_20_1/ holding one CSV (6 accelerometer channels
+    # at 2 kHz + GPS, 75-120 MB) and a frames subfolder of JPGs, which is most of the 114 GB.
+    "rail_vivid_vibration": ("vibration", "Rail-VIVID accelerometer CSVs only, all 20 runs (~2 GB)",
+                             huggingface("saluslab/Rail-VIVID", ["README.md", "*.py", "*.csv"])),
+    "rail_vivid_sample": ("vibration+image", "Rail-VIVID, one run with its frames",
+                          huggingface("saluslab/Rail-VIVID", ["README.md", "*.py", "AtoB_20_1/*"])),
     "rail_vivid": ("vibration+image", "Rail-VIVID, full (~114 GB)",
                    huggingface("saluslab/Rail-VIVID")),
     "corrugation": ("acoustic+vibration", "UPM onboard corrugation database (~607 MB)",
                     zenodo("16569018")),
+    "draisine_vibration": ("vibration", "Rail-mounted triaxial accel. at 1.6 kHz, 93 passes w/ speed (12 MB)",
+                           zenodo("19851718")),
+    "madrid_bcn_onboard": ("vibration", "Onboard IMU + GPS, Madrid-Barcelona, 40 Hz, unlabelled",
+                           zenodo("17607068")),
     "faultseg": ("image", "FaultSeg train-wheel defects (v1 ~8.5 GB)", zenodo("12957455")),
     "rsdds": ("image", "NEU RSDDS rail surface, 2D + depth + masks (zip password: neurail)",
               git_branch("https://github.com/neu-rail-rsdds/rsdds.git", "dataset_link")),
@@ -116,6 +115,10 @@ SOURCES = {
                                manual("https://data.mendeley.com/datasets/8hxtgyyxrw/2")),
     "kaggle_track_faults": ("image", "Kaggle defective / non-defective track images",
                             kaggle("salmaneunus/railway-track-fault-detection")),
+    "kaggle_bangladesh_track": ("image", "Bangladesh Railway track fault images",
+                                kaggle("ashikadnan/railway-track-fault-detectionbangladesh-railway")),
+    "rfdd": ("image", "RFDD fastener defects, 1,350 images, 6 classes (CC BY-NC-ND)",
+             manual("https://doi.org/10.57760/sciencedb.msdc.00071")),
     "acoustic_track_pk": ("acoustic", "Pakistan Railways cart audio: normal/superelevation/wheel burnt",
                           gdrive_folder("https://drive.google.com/drive/folders/"
                                         "1fgty5Ek_fTLLfnggFQy2KdWuktDp6usi")),
