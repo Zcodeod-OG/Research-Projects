@@ -48,8 +48,15 @@ python download.py all --dry-run                  # see everything without downl
 - Papers: Shafique et al. 2021 (https://pmc.ncbi.nlm.nih.gov/articles/PMC8472961/), https://www.mdpi.com/1424-8220/23/16/7018, https://www.nature.com/articles/s41598-025-14763-w.
 - The papers say "available on request"; a Google Drive copy is linked from https://github.com/Arehmans/railways. No licence stated; research use only, cite Shafique et al.
 
-**Rail vibrations from draisine passages with speed information** (not scripted yet)
-- Zenodo https://zenodo.org/records/19851718. Found in search but the page could not be read (rate-limited), so contents and labels are unverified.
+**Rail vibrations from draisine passages** (`draisine_vibration`)
+- Rail-mounted triaxial accelerometers, 1.6 kHz, 16-bit WAV. 93 complete passes with measured speed, plus hammer-strike and braking recordings. 12 MB, CC-BY-4.0.
+- No defect labels: useful as healthy-track background for mixing (see below) and for learning how speed changes the signal.
+- https://zenodo.org/records/19851718
+
+**Madrid–Barcelona onboard monitoring** (`madrid_bcn_onboard`)
+- On-board accelerometer, gyroscope, magnetometer and GPS at 40 Hz along the full route. CC-BY-4.0. Unlabelled.
+- 40 Hz only captures low-frequency ride / track-geometry behaviour, not rail-head defects. Use for geometry-type faults (e.g. superelevation) or pre-training.
+- https://zenodo.org/records/17607068
 
 ### Images
 
@@ -74,9 +81,34 @@ python download.py all --dry-run                  # see everything without downl
 - v1 ~8.5 GB (the full record may be far larger; the script refuses Zenodo records over `--max-gb`, default 20). CC-BY-4.0.
 - https://zenodo.org/records/12957455 · paper: https://www.nature.com/articles/s41597-025-04557-0
 
+**RFDD: rail fastener defects** (`rfdd`, manual download)
+- 1,350 images at 2048×2021 with 8,100+ annotated fasteners: normal, missing, inverted, displaced, deformed, fractured.
+- Licence CC BY-NC-ND 4.0 (non-commercial, no redistribution of modified data).
+- https://doi.org/10.57760/sciencedb.msdc.00071 · paper: https://www.nature.com/articles/s41597-026-07851-7
+
+**Railway Track Fault Detection (Bangladesh Railway), Kaggle** (`kaggle_bangladesh_track`)
+- Track fault images from Bangladesh Railway; contents not verified (page could not be read). Needs a Kaggle API token.
+- https://www.kaggle.com/datasets/ashikadnan/railway-track-fault-detectionbangladesh-railway
+
 **Rail-5k** (not scripted)
 - ~5k real-world rail surface images, 13 defect types. Access is by request to the authors.
 - https://arxiv.org/abs/2106.14366
+
+## Enlarging the vibration / acoustic data
+
+No large labelled public rail vibration dataset exists (searched Kaggle, Zenodo, Mendeley, IEEE DataPort, Indian sources). In order of payoff:
+
+1. **Window + augment what we have** with `augment_vibration.py`. A 17 s clip becomes 33 one-second windows, and 4 augmented copies each gives 165 per clip: the 720 Pakistan clips become ~24k training windows. Speed perturbation is the most physically meaningful augmentation, since the same defect passed at a different speed shifts its frequencies proportionally. Split train/test by recording, never by window.
+   ```bash
+   python augment_vibration.py raw/draisine_vibration/**/*.wav --label normal --copies 0 -o windows/healthy.npz
+   python augment_vibration.py raw/acoustic_track_pk/<wheel_burnt dir>/*.wav --label wheel_burnt \
+       --background windows/healthy.npz -o windows/wheel_burnt.npz   # needs matching sample rates
+   ```
+2. **Label Rail-VIVID by position.** Match each CSV row's GPS to the 9 anomaly locations in its paper; each anomaly is passed in 20 runs at 4 speeds, giving ~180 labelled passes plus hours of healthy track.
+3. **Pre-train on unlabelled data, fine-tune on labelled.** Rail-VIVID, draisine and Madrid–Barcelona signals are unlabelled but plentiful; self-supervised pre-training (masked-spectrogram or contrastive) on them, then fine-tuning on the small labelled sets, usually beats training from scratch. Pretrained audio models (AST, BEATs, PANNs) are another starting point.
+4. **Generate fault examples.** Once 1–3 are in place, train a diffusion model on fault spectrograms to synthesise extra rare-class samples. Validate that a classifier trained on synthetic + real beats real alone on a real-only test set.
+5. **Record your own.** Phone accelerometer + microphone (e.g. the free phyphox app, accelerometer typically 100–500 Hz depending on the phone, audio 44.1–48 kHz) on a train over known defects, noting GPS. The only route to audio, vibration and images of the *same* faults.
+6. **Simulate.** Vehicle–track dynamics models can generate axle-box acceleration for squats, joints and wheel flats (see the DLR / TU Delft axle-box work); higher effort, useful if a specific defect type stays scarce.
 
 ## Gaps to know about
 
