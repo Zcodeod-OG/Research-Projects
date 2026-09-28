@@ -53,6 +53,12 @@ python download.py all --dry-run                  # see everything without downl
 - No defect labels: useful as healthy-track background for mixing (see below) and for learning how speed changes the signal.
 - https://zenodo.org/records/19851718
 
+**High-Speed Train Bogie Vibration & Fault Diagnosis, Kaggle** (`kaggle_bogie_synthetic`)
+- **Synthetic** (simulated) 3-axis vibration of train bogie components with added noise. CC0, ~200 MB.
+- Set 1: normal + 6 faults at 80–200 km/h; set 2: normal + 14 single faults at 200 km/h; 1,000 samples per class, 486 points each.
+- Faults are in the *vehicle* (air springs, dampers, wheelsets, motors), not the track. Useful only for pre-training a vibration encoder or testing the pipeline end to end; don't count results on it as track-fault accuracy.
+- https://www.kaggle.com/datasets/ziya07/high-speed-train-bogie-vibration-and-fault-diagnosis
+
 **Madrid–Barcelona onboard monitoring** (`madrid_bcn_onboard`)
 - On-board accelerometer, gyroscope, magnetometer and GPS at 40 Hz along the full route. CC-BY-4.0. Unlabelled.
 - 40 Hz only captures low-frequency ride / track-geometry behaviour, not rail-head defects. Use for geometry-type faults (e.g. superelevation) or pre-training.
@@ -72,7 +78,8 @@ python download.py all --dry-run                  # see everything without downl
 - Not the same as the older RSDDs Type-I/II set (https://ieee-dataport.org/documents/rsdds).
 
 **Railway Track Fault Detection, Kaggle** (`kaggle_track_faults`)
-- Binary defective / non-defective track photos, a few hundred images. Needs a Kaggle API token.
+- Defective / non-defective photos of rails and fasteners, collected by hand in Bangladesh. 2.14 GB. Needs a Kaggle API token.
+- Licence "Data files © Original Authors"; cite Eunus et al., "ECARRNet", AI 2024, 5(2):482-503.
 - https://www.kaggle.com/datasets/salmaneunus/railway-track-fault-detection
 - Related: fastener and rail subsets https://www.kaggle.com/datasets/ashikadnan/railway-track-fault-detection-dataset2fastener
 
