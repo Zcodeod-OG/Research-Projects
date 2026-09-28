@@ -5,11 +5,11 @@ Raw data is large and is never committed; raw/ is git-ignored.
 
 Usage:
     python download.py --list
-    python download.py rail_vivid_sample corrugation
+    python download.py rail_vivid_vibration corrugation
     python download.py all --dry-run
 
 Optional dependencies, only needed for the sources that use them:
-    pip install huggingface_hub   # rail_vivid, rail_vivid_sample
+    pip install huggingface_hub   # rail_vivid*
     pip install kaggle            # kaggle_track_faults (needs ~/.kaggle/kaggle.json)
     pip install gdown             # acoustic_track_pk
 """
@@ -46,23 +46,14 @@ def zenodo(record_id):
     return fetch
 
 
-def huggingface(repo_id, allow_patterns=None, first_run_only=False):
+def huggingface(repo_id, allow_patterns=None):
     def fetch(dest, dry_run):
-        from huggingface_hub import list_repo_files, snapshot_download
-        patterns = allow_patterns
-        if first_run_only:
-            # Keep top-level metadata plus the first run folder, so prototyping
-            # doesn't need the whole ~114 GB. Folder names come from the repo itself.
-            files = list_repo_files(repo_id, repo_type="dataset")
-            tops = sorted({f.split("/")[0] for f in files if "/" in f})
-            runs = [t for t in tops if "run" in t.lower()]
-            keep = [t for t in tops if t not in runs] + runs[:1]
-            patterns = [f for f in files if "/" not in f] + [f"{t}/*" for t in keep]
-        print(f"  hf dataset {repo_id} patterns={patterns or 'all'}")
+        print(f"  hf dataset {repo_id} patterns={allow_patterns or 'all'}")
         if dry_run:
             return
+        from huggingface_hub import snapshot_download
         snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=dest,
-                          allow_patterns=patterns)
+                          allow_patterns=allow_patterns)
     return fetch
 
 
@@ -103,8 +94,12 @@ def manual(url):
 
 # name -> (modality, description, fetcher). Details and licences are in README.md.
 SOURCES = {
-    "rail_vivid_sample": ("vibration+image", "Rail-VIVID, metadata + anomalies + first run only",
-                          huggingface("saluslab/Rail-VIVID", first_run_only=True)),
+    # Rail-VIVID runs are folders like AtoB_20_1/ holding one CSV (6 accelerometer channels
+    # at 2 kHz + GPS, 75-120 MB) and a frames subfolder of JPGs, which is most of the 114 GB.
+    "rail_vivid_vibration": ("vibration", "Rail-VIVID accelerometer CSVs only, all 20 runs (~2 GB)",
+                             huggingface("saluslab/Rail-VIVID", ["README.md", "*.py", "*.csv"])),
+    "rail_vivid_sample": ("vibration+image", "Rail-VIVID, one run with its frames",
+                          huggingface("saluslab/Rail-VIVID", ["README.md", "*.py", "AtoB_20_1/*"])),
     "rail_vivid": ("vibration+image", "Rail-VIVID, full (~114 GB)",
                    huggingface("saluslab/Rail-VIVID")),
     "corrugation": ("acoustic+vibration", "UPM onboard corrugation database (~607 MB)",

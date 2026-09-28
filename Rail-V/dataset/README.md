@@ -7,7 +7,7 @@ download script and the data lands in `raw/`, which is git-ignored.
 ```bash
 cd Rail-V/dataset
 python download.py --list                         # what's available
-python download.py rail_vivid_sample corrugation  # recommended starting set
+python download.py rail_vivid_vibration corrugation  # recommended starting set
 python download.py all --dry-run                  # see everything without downloading
 ```
 
@@ -15,7 +15,7 @@ python download.py all --dry-run                  # see everything without downl
 
 | Priority | Source | Why |
 |---|---|---|
-| 1 | **Rail-VIVID** | The only public set found with *synchronized* vibration and camera data on the same track, with ground-truth anomaly locations. This is what makes real fusion trainable. |
+| 1 | **Rail-VIVID (vibration only)** | ~2 GB of 6-channel accelerometer data at 2 kHz with GPS, over 20 runs of the same track. The biggest vibration source here. |
 | 2 | **UPM Corrugation database** | Onboard acoustic + vibration at 4 speeds, CC-BY. Good for the audio branch and for speed-robustness. |
 | 3 | **Acoustic track faults (Pakistan)** | Microphone audio with class labels (normal / superelevation / wheel burnt). Small but the closest match to "audio frequency" classification. |
 | 4 | Image sets (MUET, RSDDS, Kaggle, FaultSeg) | Pre-train / fine-tune the image branch on labelled defect images. |
@@ -24,7 +24,9 @@ python download.py all --dry-run                  # see everything without downl
 
 ### Multimodal (vibration + image)
 
-**Rail-VIVID: A Multimodal Railway Vibration and Vision Dataset** (`rail_vivid`, `rail_vivid_sample`)
+**Rail-VIVID: A Multimodal Railway Vibration and Vision Dataset** (`rail_vivid_vibration`, `rail_vivid_sample`, `rail_vivid`)
+- Layout: one folder per run (e.g. `AtoB_20_1/`, direction_speed_repeat) holding a CSV of Timestamp, Channel_1..6 (m/s²), Temperature, Humidity, Latitude, Longitude (75–120 MB each), plus a subfolder of JPG frames. The frames are nearly all of the 114 GB. `Anomaly/` holds FARO `.fls` 3D scans of the anomalies.
+- `rail_vivid_vibration` pulls only the 20 CSVs (~2 GB). The CSV rows carry **no fault labels**: anomalies are marked by position, so labels come from matching each row's GPS to the anomaly locations in the paper (allow for the ~15 m drift noted below). Also well suited to self-supervised pre-training or healthy-track anomaly detection.
 - 6 accelerometers (Silicon Designs 2012, ±5 g) at 2 kHz, 16-bit; 5 MP mono camera at ~30–40 FPS; GNSS.
 - 20 repeated runs over a fixed 1.4 km segment at different speeds and directions.
 - 9 ground-truthed track anomalies (e.g. rail joints, divergence/convergence points) with 3D point-cloud scans.
