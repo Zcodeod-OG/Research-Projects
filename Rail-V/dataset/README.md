@@ -9,10 +9,10 @@ cd Rail-V/dataset
 python download.py --list                 # what's available (downloads nothing)
 python download.py recommended            # recommended starting set, ~6 GB
 python download.py rail_vivid_vibration corrugation   # or pick sources by name
-python download.py all --dry-run          # see everything without downloading
+python download.py all --dry-run          # everything except the 114 GB Rail-VIVID images; dry run only lists
 ```
 
-Running `download.py` with no source names only prints the list. Use `--out DIR` to download somewhere other than `raw/`.
+Running `download.py` with no source names only prints the list. The full Rail-VIVID set (`rail_vivid`, ~114 GB of camera frames) is never included in `all`; use `rail_vivid_vibration` (~2 GB). Use `--out DIR` to download somewhere other than `raw/`.
 
 ### In Google Colab (saving to Google Drive)
 

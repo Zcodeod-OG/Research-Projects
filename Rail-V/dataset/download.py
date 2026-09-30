@@ -25,6 +25,9 @@ from pathlib import Path
 
 RAW_DIR = Path(__file__).resolve().parent / "raw"
 # Small-to-medium sets covering both branches (~6 GB); see README "Recommended starting set".
+# Too big for Colab / most laptops (Rail-VIVID camera frames). Only fetched when named
+# explicitly, never through 'all'.
+HUGE = {"rail_vivid": "~114 GB", "rail_vivid_sample": "one run's frames, several GB"}
 RECOMMENDED = ["rail_vivid_vibration", "corrugation", "draisine_vibration", "acoustic_track_pk",
                "kaggle_track_faults", "rsdds"]
 MAX_GB = 20  # guard against accidentally pulling huge records; see --max-gb
@@ -136,7 +139,7 @@ SOURCES = {
 def main():
     global MAX_GB
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("names", nargs="*", help="source names, 'recommended', or 'all' (includes the 114 GB Rail-VIVID)")
+    parser.add_argument("names", nargs="*", help="source names, 'recommended', or 'all' (everything except the huge Rail-VIVID image sets)")
     parser.add_argument("--out", type=Path, default=RAW_DIR, help="where to download (default: %(default)s)")
     parser.add_argument("--list", action="store_true", help="list available sources")
     parser.add_argument("--dry-run", action="store_true", help="print what would be downloaded")
@@ -154,12 +157,16 @@ def main():
                   "  python download.py rail_vivid_vibration corrugation")
         return
 
-    presets = {"all": list(SOURCES), "recommended": RECOMMENDED}
+    presets = {"all": [n for n in SOURCES if n not in HUGE], "recommended": RECOMMENDED}
     names = [n for name in args.names for n in presets.get(name, [name])]
     unknown = [n for n in names if n not in SOURCES]
     if unknown:
         sys.exit(f"unknown source(s): {', '.join(unknown)}; see --list")
 
+    for name in names:
+        if name in HUGE and name in args.names:
+            print(f"WARNING: {name} is {HUGE[name]}, mostly camera frames. For vibration only, "
+                  f"use rail_vivid_vibration (~2 GB).")
     failed = []
     for name in names:
         print(f"[{name}]")
