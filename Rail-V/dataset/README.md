@@ -6,10 +6,33 @@ download script and the data lands in `raw/`, which is git-ignored.
 
 ```bash
 cd Rail-V/dataset
-python download.py --list                         # what's available
-python download.py rail_vivid_vibration corrugation  # recommended starting set
-python download.py all --dry-run                  # see everything without downloading
+python download.py --list                 # what's available (downloads nothing)
+python download.py recommended            # recommended starting set, ~6 GB
+python download.py rail_vivid_vibration corrugation   # or pick sources by name
+python download.py all --dry-run          # see everything without downloading
 ```
+
+Running `download.py` with no source names only prints the list. Use `--out DIR` to download somewhere other than `raw/`.
+
+### In Google Colab (saving to Google Drive)
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+
+!git clone https://github.com/Zcodeod-OG/Research-Projects.git
+%cd Research-Projects/Rail-V/dataset
+!pip install -q huggingface_hub kaggle gdown
+
+# Kaggle sources need an API token: kaggle.com > Settings > API > Create New Token
+import os
+os.environ["KAGGLE_USERNAME"] = "your_kaggle_username"
+os.environ["KAGGLE_KEY"] = "your_kaggle_key"
+
+!python download.py recommended --out /content/drive/MyDrive/rail-v-data
+```
+
+Manual sources (`mendeley_track_surface`, `rfdd`) only print a link; download those in the browser and upload them to the same Drive folder.
 
 ## Recommended starting set
 

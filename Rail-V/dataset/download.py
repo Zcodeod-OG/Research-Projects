@@ -4,9 +4,10 @@
 Raw data is large and is never committed; raw/ is git-ignored.
 
 Usage:
-    python download.py --list
+    python download.py --list                       # show sources (downloads nothing)
+    python download.py recommended                  # the recommended starting set
     python download.py rail_vivid_vibration corrugation
-    python download.py all --dry-run
+    python download.py recommended --out /content/drive/MyDrive/rail-v-data   # e.g. Colab + Drive
 
 Optional dependencies, only needed for the sources that use them:
     pip install huggingface_hub   # rail_vivid*
@@ -23,6 +24,9 @@ import urllib.request
 from pathlib import Path
 
 RAW_DIR = Path(__file__).resolve().parent / "raw"
+# Small-to-medium sets covering both branches (~6 GB); see README "Recommended starting set".
+RECOMMENDED = ["rail_vivid_vibration", "corrugation", "draisine_vibration", "acoustic_track_pk",
+               "kaggle_track_faults", "rsdds"]
 MAX_GB = 20  # guard against accidentally pulling huge records; see --max-gb
 
 
@@ -82,7 +86,9 @@ def gdrive_folder(url):
         if dry_run:
             return
         import gdown
-        gdown.download_folder(url, output=str(dest), quiet=False)
+        # gdown fetches at most 50 files per folder; if it stops early, download the
+        # folder as a zip from the Drive web UI instead.
+        gdown.download_folder(url, output=str(dest), quiet=False, remaining_ok=True)
     return fetch
 
 
@@ -130,7 +136,8 @@ SOURCES = {
 def main():
     global MAX_GB
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("names", nargs="*", help="source names, or 'all'")
+    parser.add_argument("names", nargs="*", help="source names, 'recommended', or 'all' (includes the 114 GB Rail-VIVID)")
+    parser.add_argument("--out", type=Path, default=RAW_DIR, help="where to download (default: %(default)s)")
     parser.add_argument("--list", action="store_true", help="list available sources")
     parser.add_argument("--dry-run", action="store_true", help="print what would be downloaded")
     parser.add_argument("--max-gb", type=float, default=MAX_GB,
@@ -141,9 +148,14 @@ def main():
     if args.list or not args.names:
         for name, (modality, desc, _) in SOURCES.items():
             print(f"{name:24} {modality:20} {desc}")
+        if not args.list:
+            print("\nNothing downloaded: pass source names, e.g.\n"
+                  "  python download.py recommended\n"
+                  "  python download.py rail_vivid_vibration corrugation")
         return
 
-    names = list(SOURCES) if args.names == ["all"] else args.names
+    presets = {"all": list(SOURCES), "recommended": RECOMMENDED}
+    names = [n for name in args.names for n in presets.get(name, [name])]
     unknown = [n for n in names if n not in SOURCES]
     if unknown:
         sys.exit(f"unknown source(s): {', '.join(unknown)}; see --list")
@@ -152,12 +164,14 @@ def main():
     for name in names:
         print(f"[{name}]")
         try:
-            SOURCES[name][2](RAW_DIR / name, args.dry_run)
+            SOURCES[name][2](args.out / name, args.dry_run)
         except Exception as exc:  # keep going so one dead link doesn't block the rest
             print(f"  FAILED: {exc}")
             failed.append(name)
     if failed:
         sys.exit(f"failed: {', '.join(failed)}")
+    if not args.dry_run:
+        print(f"done; data is in {args.out}")
 
 
 if __name__ == "__main__":
