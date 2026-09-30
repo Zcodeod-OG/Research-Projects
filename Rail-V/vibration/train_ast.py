@@ -30,8 +30,8 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import (ASTConfig, ASTFeatureExtractor, ASTForAudioClassification,
                           get_cosine_schedule_with_warmup)
 
-from common import (augment, confusion, load_recording, macro_report, random_crop, read_manifest,
-                    speed_crop, windows)
+from common import (augment, confusion, load_recording, macro_report, positive_label, random_crop,
+                    read_manifest, speed_crop, tune_threshold, windows)
 
 FS = 16000
 PRETRAINED = "MIT/ast-finetuned-audioset-10-10-0.4593"
@@ -138,7 +138,10 @@ class EvalWindows(Dataset):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, labels, n_recs):
+def evaluate(model, loader, device, labels, n_recs, threshold=None):
+    """Argmax decisions, or for a two-class task with a tuned threshold, the positive
+    class whenever its clip probability reaches it. Also returns per-clip
+    probabilities and labels so the threshold can be tuned on validation."""
     model.eval()
     logits_sum = torch.zeros(n_recs, len(labels))
     counts = torch.zeros(n_recs)
@@ -155,12 +158,29 @@ def evaluate(model, loader, device, labels, n_recs):
         win_true += t.tolist()
         win_pred += logits.argmax(-1).tolist()
     seen = counts > 0
-    clip_pred = (logits_sum[seen] / counts[seen, None]).argmax(-1).tolist()
+    clip_prob = logits_sum[seen] / counts[seen, None]
     clip_true = [true[i] for i in range(n_recs) if seen[i]]
+    pos = positive_label(labels)
+    if threshold is not None and pos:
+        k = labels.index(pos)
+        clip_pred = [k if p >= threshold else 1 - k for p in clip_prob[:, k].tolist()]
+    else:
+        clip_pred = clip_prob.argmax(-1).tolist()
     name = lambda ids: [labels[i] for i in ids]
     return {"window": macro_report(name(win_true), name(win_pred), labels),
             "clip": macro_report(name(clip_true), name(clip_pred), labels),
-            "clip_confusion": confusion(name(clip_true), name(clip_pred), labels)}
+            "clip_confusion": confusion(name(clip_true), name(clip_pred), labels),
+            "_clip_prob": clip_prob.numpy(), "_clip_true": clip_true}
+
+
+def evaluate_threshold_f1(res, labels, pos, t):
+    k = labels.index(pos)
+    pred = [labels[k] if p >= t else labels[1 - k] for p in res["_clip_prob"][:, k].tolist()]
+    return macro_report([labels[i] for i in res["_clip_true"]], pred, labels)["macro_f1"]
+
+
+def public(res):
+    return {k: v for k, v in res.items() if not k.startswith("_")}
 
 
 def main():
@@ -193,6 +213,7 @@ def main():
     if not rows:
         raise SystemExit(f"no labelled rows for source {args.source} in {args.manifest}")
     labels = sorted({r["label"] for r in rows})
+    pos = positive_label(labels)
     if args.fold is None:
         part = {"train": "train", "val": "val", "test": "test"}
         role = [part[r["split"]] for r in rows]
@@ -260,6 +281,10 @@ def main():
             total += loss.item()
         val = evaluate(model, val_dl, device, labels, len(va_x))
         f1 = val["clip"]["macro_f1"]
+        if pos:  # rare positive class: select on macro-F1 at the best val threshold
+            t = tune_threshold(val["_clip_prob"][:, labels.index(pos)],
+                               [labels[i] == pos for i in val["_clip_true"]])
+            f1 = evaluate_threshold_f1(val, labels, pos, t)
         history.append({"epoch": epoch, "train_loss": round(total / max(1, len(train_dl)), 4),
                         "val_clip_macro_f1": f1, "val_window_macro_f1": val["window"]["macro_f1"]})
         print(f"epoch {epoch}: loss {history[-1]['train_loss']}  val clip macro-F1 {f1}  "
@@ -275,13 +300,25 @@ def main():
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device)["state_dict"])
     test = evaluate(model, test_dl, device, labels, len(te_x))
     results = {"config": {k: str(v) for k, v in vars(args).items()}, "labels": labels,
-               "best_epoch": best_epoch, "best_val_clip_macro_f1": best, "history": history, "test": test}
+               "best_epoch": best_epoch, "best_val_clip_macro_f1": best, "history": history,
+               "test": public(test)}
+    if pos:  # threshold chosen on validation with the best checkpoint, then applied to test
+        val = evaluate(model, val_dl, device, labels, len(va_x))
+        results["threshold"] = tune_threshold(val["_clip_prob"][:, labels.index(pos)],
+                                              [labels[i] == pos for i in val["_clip_true"]])
+        results["test_tuned"] = public(evaluate(model, test_dl, device, labels, len(te_x),
+                                                threshold=results["threshold"]))
     (args.out / "results.json").write_text(json.dumps(results, indent=2))
     print(f"\nbest epoch {best_epoch} (val clip macro-F1 {best})")
     print(f"TEST  window acc {test['window']['accuracy']}  macro-F1 {test['window']['macro_f1']}")
     print(f"TEST  clip   acc {test['clip']['accuracy']}  macro-F1 {test['clip']['macro_f1']}  "
           f"recall {test['clip']['recall']}")
     print(test["clip_confusion"])
+    if pos:
+        tt = results["test_tuned"]
+        print(f"TEST  clip, threshold {results['threshold']:.3f} tuned on val: acc {tt['clip']['accuracy']}  "
+              f"macro-F1 {tt['clip']['macro_f1']}  recall {tt['clip']['recall']}")
+        print(tt["clip_confusion"])
     print(f"saved {args.out / 'best.pt'} and results.json")
 
 

@@ -128,6 +128,47 @@ def mfcc_features(w, fs, n_mfcc=20, n_mels=64, frame_s=0.025, hop_s=0.010):
                            scalars.mean(0), scalars.std(0)]).astype(np.float32)
 
 
+def psd_features(w, fs, n_bands=48, fmin=20.0):
+    """Log power in log-spaced frequency bands (Welch PSD), relative to the window's
+    mean band power, plus the overall level. Keeps narrow spectral peaks such as a
+    corrugation tone, which MFCC means tend to smear out."""
+    from scipy.signal import welch
+    f, pxx = welch(w, fs=fs, nperseg=min(512, len(w)))
+    edges = np.geomspace(fmin, fs / 2, n_bands + 1)
+    bands = np.array([pxx[(f >= lo) & (f < hi)].mean() if np.any((f >= lo) & (f < hi)) else 0.0
+                      for lo, hi in zip(edges[:-1], edges[1:])])
+    logb = np.log(bands + 1e-12)
+    return np.concatenate([logb - logb.mean(), [logb.mean()]]).astype(np.float32)
+
+
+def positive_label(labels):
+    """For a two-class task, the class that isn't 'normal' (e.g. 'corrugated'); else None."""
+    rest = [c for c in labels if c != "normal"]
+    return rest[0] if len(labels) == 2 and len(rest) == 1 else None
+
+
+def tune_threshold(p_pos, is_pos):
+    """Decision threshold on the positive-class probability that maximises macro-F1.
+    With a rare class, argmax (threshold 0.5) often never predicts it at all."""
+    p_pos, is_pos = np.asarray(p_pos, float), np.asarray(is_pos, bool)
+    best_t, best_f1 = 0.5, -1.0
+    cands = np.unique(p_pos)
+    for i, t in enumerate(cands):
+        pred = p_pos >= t
+        f1s = []
+        for c in (True, False):
+            tp = np.sum((pred == c) & (is_pos == c))
+            prec = tp / max(1, np.sum(pred == c))
+            rec = tp / max(1, np.sum(is_pos == c))
+            f1s.append(2 * prec * rec / (prec + rec) if prec + rec else 0.0)
+        if np.mean(f1s) > best_f1:
+            # midway to the next lower score, so test clips just under the best val
+            # score aren't cut off by a threshold sitting exactly on a val sample
+            best_t = float(t if i == 0 else (t + cands[i - 1]) / 2)
+            best_f1 = float(np.mean(f1s))
+    return best_t
+
+
 def macro_report(y_true, y_pred, labels):
     """Accuracy, macro-F1 and a per-class recall dict, without needing sklearn."""
     y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
