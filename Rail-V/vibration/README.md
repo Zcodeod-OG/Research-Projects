@@ -39,9 +39,18 @@ drawn from another sensor would teach the model to recognise the sensor, not the
 
 The `.mat` files have no labels: `So_pks` / `Vi_pks` are kilometric positions. The dataset's paper
 (Soto-Ocampo et al., *Mathematics* 2025, 13(17), 2815) reports two sections with severe corrugation,
-confirmed by visual inspection: km 4.855-4.914 and 5.239-5.326. Clips at least half inside those are
-`corrugated`; clips at least 20 m clear of them are `normal` (really "not reported corrugated"); the
-rest are dropped. That's ~146 m of corrugated track, so only a few dozen corrugated clips over four
+confirmed by visual inspection: km 4.855-4.914 and 5.239-5.326.
+
+Each run is resampled onto a uniform distance grid, as if the train always ran at 72 km/h. Corrugation
+is a fixed wavelength (~28.5 mm), so in time its tone moves with speed (~390 Hz at 40 km/h, ~730 Hz at
+75 km/h); on the distance grid it's at ~700 Hz in every run, which is what makes the 40/50 km/h ->
+75 km/h test possible. Clips are 20 m (1 s at the reference speed). Clips at least 75% inside a section
+are `corrugated` (overlapping, 2 m hop); clips at least 20 m clear are `normal` (really "not reported
+corrugated"); the rest are dropped.
+
+For two-class tasks both scripts also pick a decision threshold on the validation run and report the
+test score with it (`test_tuned`), since with a rare class plain argmax can end up never predicting it.
+The baseline uses MFCC plus log band-power (PSD) features by default (`--features`). That's ~146 m of corrugated track, so only a few dozen corrugated clips over four
 runs, and every one comes from the same two sites. Scores here show whether the model generalises
 across speed, not across track.
 
