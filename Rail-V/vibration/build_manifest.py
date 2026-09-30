@@ -92,6 +92,29 @@ def scan_rail_vivid(d):
             for p in sorted(d.rglob("*.csv"))]
 
 
+def scan_corrugation(d):
+    """Clips written by prepare_corrugation.py: segments/<mic|axle>/<label>/<run>_<km>.wav.
+    Grouped by run, since clips from one run share speed and direction."""
+    rows = []
+    for signal, sensor in (("mic", "mic"), ("axle", "accel")):
+        for p in sorted((d / "segments" / signal).glob("*/*.wav")):
+            run = p.stem.rsplit("_", 1)[0]
+            rows.append(wav_row(p, f"corrugation_{signal}", sensor, p.parent.name, f"upm/{run}"))
+    return rows
+
+
+def corrugation_split(group):
+    """Hold out a whole run per split: 75 km/h is the test run (the cross-speed test
+    in the plan), 60 km/h validation, 40 and 50 km/h training. CV folds are
+    leave-one-run-out over the three non-test runs."""
+    if "75kmh" in group:
+        return "test", -1
+    for fold, speed in enumerate(("40kmh", "50kmh", "60kmh")):
+        if speed in group:
+            return ("val" if speed == "60kmh" else "train"), fold
+    return "pool", -1
+
+
 def assign_splits(rows, val=0.15, test=0.15, folds=5, seed=0):
     """Grouped, per-label split into train/val/test, plus a CV fold id for train+val.
     Unlabelled / healthy-only sources go to split 'pool'."""
@@ -111,8 +134,11 @@ def assign_splits(rows, val=0.15, test=0.15, folds=5, seed=0):
             if split_of[g] != "test":
                 fold_of[g] = i % folds
     for r in rows:
-        r["split"] = split_of.get(r["group"], "pool")
-        r["fold"] = fold_of.get(r["group"], -1)
+        if r["source"].startswith("corrugation_"):
+            r["split"], r["fold"] = corrugation_split(r["group"])
+        else:
+            r["split"] = split_of.get(r["group"], "pool")
+            r["fold"] = fold_of.get(r["group"], -1)
 
 
 def main():
@@ -138,9 +164,15 @@ def main():
         found = scan(d)
         print(f"  {len(found)} recordings")
         rows += found
-    if (args.data / "corrugation").exists():
-        print("[corrugation] found, but its .mat layout isn't known yet; run inspect_data.py and "
-              "share the output so a loader can be added")
+    d = args.data / "corrugation"
+    if d.exists():
+        print("[corrugation]")
+        if (d / "segments").exists():
+            found = scan_corrugation(d)
+            print(f"  {len(found)} clips")
+            rows += found
+        else:
+            print("  no clips yet; run prepare_corrugation.py first")
 
     assign_splits(rows, seed=args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -151,16 +183,15 @@ def main():
 
     labelled = [r for r in rows if r["split"] != "pool"]
     print(f"\nwrote {len(rows)} rows to {args.out}")
-    if labelled:
-        table = Counter((r["label"], r["split"]) for r in labelled)
-        labels = sorted({r["label"] for r in labelled})
+    for source in sorted({r["source"] for r in labelled}):
+        sub = [r for r in labelled if r["source"] == source]
+        table = Counter((r["label"], r["split"]) for r in sub)
+        print(f"\n{source}: sample rate / channels {dict(Counter((r['fs'], r['channels']) for r in sub))}")
         print(f"{'label':16}{'train':>8}{'val':>8}{'test':>8}{'groups':>8}")
-        for lab in labels:
-            groups = len({r['group'] for r in labelled if r['label'] == lab})
+        for lab in sorted({r["label"] for r in sub}):
+            groups = len({r['group'] for r in sub if r['label'] == lab})
             print(f"{lab:16}" + "".join(f"{table[(lab, s)]:>8}" for s in ("train", "val", "test"))
                   + f"{groups:>8}")
-        rates = Counter((r["fs"], r["channels"]) for r in labelled)
-        print("sample rate / channels:", dict(rates))
 
 
 if __name__ == "__main__":

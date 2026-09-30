@@ -89,16 +89,24 @@ def spec_augment(feat, valid_frames, rng, time_masks=2, time_w=40, freq_masks=2,
 
 
 class TrainWindows(Dataset):
-    def __init__(self, signals, targets, n_samples, extractor, crops_per_rec, aug):
+    def __init__(self, signals, targets, n_samples, extractor, crops_per_rec, aug, balance=True):
         self.signals, self.targets = signals, targets
         self.n, self.fe, self.crops, self.aug = n_samples, extractor, crops_per_rec, aug
+        # Class-balanced sampling: pick a class uniformly, then one of its recordings.
+        # Matters for corrugation, where corrugated clips are a few percent of the run.
+        self.by_class = [[k for k, t in enumerate(targets) if t == c] for c in sorted(set(targets))]
+        self.balance = balance
 
     def __len__(self):
         return len(self.signals) * self.crops
 
     def __getitem__(self, i):
         rng = np.random.default_rng(int(torch.randint(0, 2 ** 31 - 1, (1,))))
-        k = i % len(self.signals)
+        if self.balance:
+            members = self.by_class[rng.integers(len(self.by_class))]
+            k = members[rng.integers(len(members))]
+        else:
+            k = i % len(self.signals)
         x = self.signals[k]
         if self.aug:
             w = augment(speed_crop(x, self.n, rng), rng)
@@ -173,6 +181,7 @@ def main():
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--label-smoothing", type=float, default=0.1)
     ap.add_argument("--no-aug", action="store_true")
+    ap.add_argument("--no-balance", action="store_true", help="sample recordings uniformly, not per class")
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--smoke", action="store_true", help="tiny random model, for testing the code only")
@@ -215,7 +224,8 @@ def main():
         print("WARNING: no GPU found; in Colab use Runtime > Change runtime type > T4 GPU")
     model = build_model(labels, max_len, smoke=args.smoke).to(device)
 
-    train_dl = DataLoader(TrainWindows(tr_x, tr_y, n, extractor, args.crops_per_rec, not args.no_aug),
+    train_dl = DataLoader(TrainWindows(tr_x, tr_y, n, extractor, args.crops_per_rec, not args.no_aug,
+                                       not args.no_balance),
                           batch_size=args.batch, shuffle=True, num_workers=args.workers, drop_last=True)
     hop = int(round(args.hop * FS))
     val_dl = DataLoader(EvalWindows(va_x, va_y, n, hop, extractor), batch_size=args.batch * 2,
