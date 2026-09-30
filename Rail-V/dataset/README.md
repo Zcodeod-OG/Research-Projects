@@ -128,7 +128,7 @@ Manual sources (`mendeley_track_surface`, `rfdd`) only print a link; download th
 
 No large labelled public rail vibration dataset exists (searched Kaggle, Zenodo, Mendeley, IEEE DataPort, Indian sources). In order of payoff:
 
-1. **Window + augment what we have** with `augment_vibration.py`. A 17 s clip becomes 33 one-second windows, and 4 augmented copies each gives 165 per clip: the 720 Pakistan clips become ~24k training windows. Speed perturbation is the most physically meaningful augmentation, since the same defect passed at a different speed shifts its frequencies proportionally. Split train/test by recording, never by window.
+1. **Window + augment what we have** with `augment_vibration.py`. A 17 s clip becomes 33 one-second windows, and 4 augmented copies each gives 165 per clip: the 720 Pakistan clips become ~24k windows before augmentation and ~119k with it. These are still 720 independent recordings, and pre-generated copies take ~10-21 GB, so the training scripts in `../vibration/` augment on the fly instead. Speed perturbation is the most physically meaningful augmentation, since the same defect passed at a different speed shifts its frequencies proportionally. Split train/test by recording, never by window.
    ```bash
    python augment_vibration.py raw/draisine_vibration/**/*.wav --label normal --copies 0 -o windows/healthy.npz
    python augment_vibration.py raw/acoustic_track_pk/<wheel_burnt dir>/*.wav --label wheel_burnt \

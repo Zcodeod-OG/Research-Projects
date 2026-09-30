@@ -1,0 +1,7 @@
+numpy
+scipy
+scikit-learn
+soundfile
+h5py
+torch
+transformers>=4.40
