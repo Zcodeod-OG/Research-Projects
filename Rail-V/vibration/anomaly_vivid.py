@@ -5,8 +5,8 @@ Rail-VIVID has 20 runs over the same 1.4 km, in both directions and at four spee
 and 9 ground-truth anomalies (rail joints, divergence / convergence points). The CSVs
 carry no labels, so this learns what ordinary track looks like and flags what isn't:
 
-1. Each run is cut into 1 m pieces of track by GPS distance along the A->B line (not
-   by time, so the four speeds line up), and each piece gets per-channel vibration
+1. Each run is cut into 1 m pieces of track by distance along the track (not by time,
+   so the four speeds line up), and each piece gets per-channel vibration
    features: level, kurtosis, crest factor and band energies.
 2. Leave-one-run-out: an Isolation Forest fits the other 19 runs and scores the held-out
    run. Anomalies are a tiny share of the track, so "mostly healthy" training is fine.
@@ -19,7 +19,7 @@ distance_m), it also reports how many of the 9 were found within --tol metres an
 how many candidates were false alarms.
 
     python anomaly_vivid.py --data /content/data --out /content/drive/MyDrive/rail-v-runs/vivid_anomaly
-    python anomaly_vivid.py ... --anomalies vivid_anomalies.csv
+    python anomaly_vivid.py ... --anomalies vivid_anomalies.csv   # Table 2, in this folder
 
 Needs numpy, pandas, scikit-learn; matplotlib for the plot.
 """
@@ -41,13 +41,44 @@ POINT_B = (40.23184123709821, -77.87387005111827)
 BANDS_HZ = [(1, 20), (20, 60), (60, 150), (150, 300), (300, 500)]
 
 
-def along_track(lat, lon):
-    """Metres from Point A, projected onto the straight A->B line (local flat-earth)."""
-    k_lat = 110_540.0
-    k_lon = 111_320.0 * math.cos(math.radians(POINT_A[0]))
-    bx, by = (POINT_B[1] - POINT_A[1]) * k_lon, (POINT_B[0] - POINT_A[0]) * k_lat
-    x, y = (lon - POINT_A[1]) * k_lon, (lat - POINT_A[0]) * k_lat
-    return (x * bx + y * by) / math.hypot(bx, by)
+K_LAT = 110_540.0
+K_LON = 111_320.0 * math.cos(math.radians(POINT_A[0]))
+
+
+def to_xy(lat, lon):
+    """Local flat-earth metres east / north of Point A."""
+    return np.stack([(np.asarray(lon) - POINT_A[1]) * K_LON, (np.asarray(lat) - POINT_A[0]) * K_LAT], 1)
+
+
+class Track:
+    """Distance along the actual (curved) track, from Point A's end.
+
+    The line curves up to ~130 m away from the straight A-B chord, so projecting onto the
+    chord would stretch or squash distances. Instead one run's GPS trace, thinned to a
+    point every ~1 m and smoothed, is the reference line; any position maps to the arc
+    length of its nearest reference point."""
+
+    def __init__(self, lat, lon, step_m=1.0):
+        xy = to_xy(lat, lon)
+        keep = [0]
+        for i in range(1, len(xy)):  # thin to ~1 m spacing (drops repeated GPS fixes)
+            if np.hypot(*(xy[i] - xy[keep[-1]])) >= step_m:
+                keep.append(i)
+        xy = xy[keep]
+        k = 9  # ~10 m moving average removes GPS jitter
+        if len(xy) > 2 * k:
+            xy = np.stack([np.convolve(np.pad(xy[:, j], k // 2, mode="edge"), np.ones(k) / k, "valid")
+                           for j in range(2)], 1)
+        if np.hypot(*xy[0]) > np.hypot(*xy[-1]):  # orient so distance starts at Point A
+            xy = xy[::-1]
+        self.xy = xy
+        self.s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))])
+        from scipy.spatial import cKDTree
+        self.tree = cKDTree(xy)
+
+    def distance(self, lat, lon):
+        _, idx = self.tree.query(to_xy(lat, lon))
+        return self.s[idx]
 
 
 def segment_features(seg):
@@ -65,13 +96,19 @@ def segment_features(seg):
     return feats
 
 
-def run_features(csv_path, seg_m, trim_m):
+def run_features(csv_path, track, seg_m, trim_m):
     df = pd.read_csv(csv_path, usecols=CHANNELS + ["Latitude", "Longitude"])
     df = df.dropna()
     acc = df[CHANNELS].to_numpy(np.float32)
-    dist = along_track(df["Latitude"].to_numpy(), df["Longitude"].to_numpy())
-    # GPS updates far slower than 2 kHz; smooth the distance so pieces aren't empty or doubled.
-    win = 2 * FS
+    dist = track.distance(df["Latitude"].to_numpy(), df["Longitude"].to_numpy())
+    # GPS updates far slower than 2 kHz and the CSV repeats each fix until the next one.
+    # Holding the last fix puts every sample up to a second behind, in opposite directions
+    # for the two travel directions, so interpolate between the fixes instead.
+    fix = np.flatnonzero(np.r_[True, np.diff(dist) != 0])
+    if len(fix) > 1:
+        dist = np.interp(np.arange(len(dist)), fix, dist[fix])
+    # Light smoothing so pieces aren't empty or doubled where GPS jitters.
+    win = FS
     dist = np.convolve(np.pad(dist, (win // 2, win - win // 2 - 1), mode="edge"),
                        np.ones(win) / win, mode="valid")
     bins = np.floor(dist / seg_m).astype(int)
@@ -126,10 +163,13 @@ def main():
     args = ap.parse_args()
 
     runs = find_runs(args.data)
+    ref = pd.read_csv(runs[0], usecols=["Latitude", "Longitude"]).dropna()
+    track = Track(ref["Latitude"].to_numpy(), ref["Longitude"].to_numpy())
+    print(f"reference track from {runs[0].parent.name}: {track.s[-1]:.0f} m")
     print(f"{len(runs)} runs; extracting 1 m features ...")
     feats = []
     for p in runs:
-        X, pos, lat, lon = run_features(p, args.seg_m, args.trim_m)
+        X, pos, lat, lon = run_features(p, track, args.seg_m, args.trim_m)
         feats.append((p.parent.name, X, pos, lat, lon))
         print(f"  {p.parent.name}: {len(X)} pieces, {pos.min():.0f}-{pos.max():.0f} m")
 
@@ -174,7 +214,8 @@ def main():
     if args.anomalies:
         t = pd.read_csv(args.anomalies)
         truth_m = (t["distance_m"].to_numpy() if "distance_m" in t
-                   else along_track(t["lat"].to_numpy(), t["lon"].to_numpy()))
+                   else track.distance(t["lat"].to_numpy(), t["lon"].to_numpy()))
+        print("known anomalies at " + ", ".join(f"{m:.0f}" for m in truth_m) + " m")
         result["evaluation"] = evaluate(cands["pos_m"].tolist(), list(truth_m), args.tol)
         e = result["evaluation"]
         print(f"\nfound {e['found']}/{e['of']} known anomalies within {args.tol:.0f} m; "
