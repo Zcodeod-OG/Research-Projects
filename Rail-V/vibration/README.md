@@ -14,6 +14,7 @@ Easiest route: open [`colab_vibration.ipynb`](colab_vibration.ipynb) in Colab an
 | `baseline_rf.py --manifest manifest.csv [--cv]` | MFCC + spectral statistics per 1 s window, random forest. The number to beat. |
 | `train_ast.py --manifest manifest.csv` | Fine-tunes the AudioSet-pretrained Audio Spectrogram Transformer on 5 s windows with on-the-fly augmentation. |
 | `anomaly_vivid.py --data DATA` | Unsupervised anomaly detector on the Rail-VIVID runs: 1 m features by distance along the track (GPS), leave-one-run-out Isolation Forest, sites flagged by most runs. Scores against the 9 known anomalies with `--anomalies`. |
+| `diagnose_vivid.py --data DATA` | Checks why the detector does or doesn't see the 9 known anomalies: sample and GPS rates, the offset between travel directions, and an impact-score heatmap. |
 | `common.py` | Loading, resampling, windowing, augmentation, MFCC, metrics. |
 
 ## Splits
