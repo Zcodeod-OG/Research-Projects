@@ -13,6 +13,7 @@ Easiest route: open [`colab_vibration.ipynb`](colab_vibration.ipynb) in Colab an
 | `build_manifest.py --data DATA --out manifest.csv` | One row per recording with label, group and a fixed grouped train/val/test split plus CV folds. Unzips archives it finds. |
 | `baseline_rf.py --manifest manifest.csv [--cv]` | MFCC + spectral statistics per 1 s window, random forest. The number to beat. |
 | `train_ast.py --manifest manifest.csv` | Fine-tunes the AudioSet-pretrained Audio Spectrogram Transformer on 5 s windows with on-the-fly augmentation. |
+| `anomaly_vivid.py --data DATA` | Unsupervised anomaly detector on the Rail-VIVID runs: 1 m features by GPS distance, leave-one-run-out Isolation Forest, sites flagged by most runs. Scores against the 9 known anomalies with `--anomalies`. |
 | `common.py` | Loading, resampling, windowing, augmentation, MFCC, metrics. |
 
 ## Splits
@@ -30,7 +31,7 @@ would leak and inflate the score.
 | `acoustic_track_pk` | baseline, AST | Labelled: normal / superelevation / wheel burnt. |
 | `corrugation_mic`, `corrugation_axle` | baseline, AST | Corrugated vs normal, from `prepare_corrugation.py`. Split by run: 40/50 km/h train, 60 val, 75 test. |
 | `draisine_vibration` | manifest only (`pool`) | Healthy track, for the anomaly detector (next step). |
-| `rail_vivid_vibration` | manifest only (`pool`) | Unlabelled until rows are matched to anomaly GPS positions. |
+| `rail_vivid_vibration` | `anomaly_vivid.py` | Unlabelled; the 9 anomaly positions are only in Table 2 of the paper, so scoring needs them entered by hand. |
 
 Different sensors (microphone vs accelerometer) are not mixed into one class: a "normal" class
 drawn from another sensor would teach the model to recognise the sensor, not the fault.
