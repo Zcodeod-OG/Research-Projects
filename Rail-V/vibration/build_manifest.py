@@ -103,6 +103,22 @@ def scan_corrugation(d):
     return rows
 
 
+def scan_vivid_clips(d):
+    """Clips written by prepare_vivid.py: clips/<joint|normal>/<run>_<pos>m_ch<k>.wav.
+    Grouped by run: every clip and channel of one pass shares its speed and day."""
+    return [wav_row(p, "vivid_joint", "accel", p.parent.name, "vivid/" + "_".join(p.stem.split("_")[:3]))
+            for p in sorted((d / "clips").glob("*/*.wav"))]
+
+
+def vivid_split(group):
+    """Runs are named <dir>_<speed>_<repeat>. Repeat 4 of every speed and direction is
+    the test set, repeat 3 validation, 1-2 training; CV folds are by repeat (1-3)."""
+    rep = int(group.rsplit("_", 1)[1])
+    if rep == 4:
+        return "test", -1
+    return ("val" if rep == 3 else "train"), rep - 1
+
+
 def corrugation_split(group):
     """Hold out a whole run per split: 75 km/h is the test run (the cross-speed test
     in the plan), 60 km/h validation, 40 and 50 km/h training. CV folds are
@@ -136,6 +152,8 @@ def assign_splits(rows, val=0.15, test=0.15, folds=5, seed=0):
     for r in rows:
         if r["source"].startswith("corrugation_"):
             r["split"], r["fold"] = corrugation_split(r["group"])
+        elif r["source"] == "vivid_joint":
+            r["split"], r["fold"] = vivid_split(r["group"])
         else:
             r["split"] = split_of.get(r["group"], "pool")
             r["fold"] = fold_of.get(r["group"], -1)
@@ -173,6 +191,12 @@ def main():
             rows += found
         else:
             print("  no clips yet; run prepare_corrugation.py first")
+
+    d = args.data / "rail_vivid_vibration"
+    if (d / "clips").exists():
+        found = scan_vivid_clips(d)
+        print(f"[rail_vivid clips]\n  {len(found)} clips")
+        rows += found
 
     assign_splits(rows, seed=args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
