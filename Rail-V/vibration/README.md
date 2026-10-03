@@ -1,6 +1,6 @@
 # Rail-V vibration / acoustic pipeline
 
-Training code for the vibration and acoustic branch. The plan behind it: the data is enough to
+Training code for Rail-V, which uses vibration and sound only (no images). The plan behind it: the data is enough to
 fine-tune a pretrained audio model on the labelled track faults, but test on recordings the model
 never saw, never on windows cut from training clips.
 
@@ -10,9 +10,11 @@ Easiest route: open [`colab_vibration.ipynb`](colab_vibration.ipynb) in Colab an
 |---|---|
 | `inspect_data.py DATA` | Prints the downloaded folder layout, WAV rates, CSV headers and `.mat` variables. |
 | `prepare_corrugation.py --data DATA` | Cuts the UPM corrugation runs into labelled 1 s clips (microphone and axlebox), using the corrugated sections from the dataset's paper. |
+| `prepare_vivid.py --data DATA` | Cuts the Rail-VIVID runs into labelled 20 m clips: `joint` around the 9 known anomalies, `normal` away from every detected stretch. Channels 1 and 3, distance-normalised. |
 | `build_manifest.py --data DATA --out manifest.csv` | One row per recording with label, group and a fixed grouped train/val/test split plus CV folds. Unzips archives it finds. |
 | `baseline_rf.py --manifest manifest.csv [--cv]` | MFCC + spectral statistics per 1 s window, random forest. The number to beat. |
 | `train_ast.py --manifest manifest.csv` | Fine-tunes the AudioSet-pretrained Audio Spectrogram Transformer on 5 s windows with on-the-fly augmentation. |
+| `train_multitask.py --manifest manifest.csv` | One model for every fault: a shared AST encoder with one head per fault family (surface, corrugation, joint). Accelerometers are played back faster to fill AST's frequency range. Each source is scored on its own test split. |
 | `anomaly_vivid.py --data DATA` | Unsupervised anomaly detector on the Rail-VIVID runs: 1 m features by distance along the track (GPS), leave-one-run-out Isolation Forest, sites flagged by most runs. Scores against the 9 known anomalies with `--anomalies`. |
 | `diagnose_vivid.py --data DATA` | Checks why the detector does or doesn't see the 9 known anomalies: sample and GPS rates, the offset between travel directions, and an impact-score heatmap. |
 | `sweep_vivid.py --data DATA` | Per channel and frequency band: repeatability between runs, per-run GPS shift from the slow (curve) signal, and whether it rises at the known anomalies. |
@@ -34,10 +36,13 @@ would leak and inflate the score.
 | `acoustic_track_pk` | baseline, AST | Labelled: normal / superelevation / wheel burnt. |
 | `corrugation_mic`, `corrugation_axle` | baseline, AST | Corrugated vs normal, from `prepare_corrugation.py`. Split by run: 40/50 km/h train, 60 val, 75 test. |
 | `draisine_vibration` | manifest only (`pool`) | Healthy track, for the anomaly detector (next step). |
-| `rail_vivid_vibration` | `anomaly_vivid.py` | Unlabelled; the 9 known anomalies from Table 2 of the paper are in `vivid_anomalies.csv`. |
+| `rail_vivid_vibration` | detectors (`*_vivid.py`) | Unlabelled runs; the 9 known anomalies from Table 2 of the paper are in `vivid_anomalies.csv`. |
+| `vivid_joint` | baseline, multi-task | Joint / switch stretch vs normal, from `prepare_vivid.py`. Split by run: repeat 4 of each speed test, repeat 3 val. |
 
 Different sensors (microphone vs accelerometer) are not mixed into one class: a "normal" class
-drawn from another sensor would teach the model to recognise the sensor, not the fault.
+drawn from another sensor would teach the model to recognise the sensor, not the fault. The same
+reason is why `train_multitask.py` gives each fault family its own head: every head compares a
+fault only with normal track from the same recordings, while the encoder is shared.
 
 ## Corrugation labels
 

@@ -1,5 +1,14 @@
 # Rail-V modelling approach
 
+> **Revised 3 Oct 2026: vibration and sound only.** The image branch and image fusion are
+> dropped. The goal is one model, trained only on vibration and acoustic data, that predicts
+> track faults: a shared pretrained audio encoder (AST) with one output head per fault family
+> (rail surface, corrugation, joints/switches), plus a healthy-track "unusual" score. Each head
+> compares a fault only with normal track from the same dataset, so the model can't learn to
+> recognise datasets instead of faults. Code: [`vibration/train_multitask.py`](vibration/train_multitask.py);
+> full plan: <https://claude.ai/artifact/LqWcBd9GTWub4roH4Kwsdm>. The original assessment below is
+> kept for reference; its image and fusion steps no longer apply.
+
 ## The proposal
 
 Two diffusion models, one trained on audio time-frequency images (spectrograms etc.) and one on
