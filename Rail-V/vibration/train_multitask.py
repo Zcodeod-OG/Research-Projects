@@ -5,7 +5,8 @@ A single pretrained AST encoder (AudioSet weights) is shared by all datasets, wi
 small output head per fault family:
 
     surface      acoustic_track_pk            normal / superelevation / wheel burn
-    corrugation  corrugation_mic, _axle       normal / corrugated
+    corrugation  corrugation_axle             normal / corrugated
+    corr_mic     corrugation_mic              normal / corrugated
     joint        vivid_joint                  normal / joint (joint or switch stretch)
 
 Why one head per family instead of one big output: each fault type comes from a
@@ -13,24 +14,33 @@ different dataset, sensor and line. A single "which fault?" output would learn t
 recognise the dataset (microphone, vehicle, noise floor) rather than the fault. Here
 every head only ever compares a fault with normal track from the same recordings,
 while the shared encoder learns from all of them. Corrugation's microphone and axle
-clips share one head, so the encoder has to find what corrugation looks like in both.
+clips get separate heads: sharing one made the microphone score fall as the axle
+score rose (0.75 vs 0.90 on its own), so the two sensors are kept apart.
 
 Sensors: microphones are resampled to 16 kHz. Accelerometers are "played back
-faster": their samples are treated as if recorded at --accel-as Hz (default 8000), so
-a 2 kHz sensor's 0-1 kHz content lands in the 0-4 kHz range AST was pretrained on.
+faster": their samples are treated as if recorded at --accel-as Hz (default 4000), so
+a 2 kHz sensor's 0-1 kHz content covers the lower half of AST's mel bands while a
+20 m Rail-VIVID clip still lasts 1.5 s. A faster speed-up made clips shorter than the
+window.
+
+Loading ~5000 small files from Google Drive can take over an hour; --cache keeps
+every decoded signal in one file so later runs load in a minute or two.
 
 Each batch picks a head (equal shares by default, --head-weights to change), then a
 class (balanced), then a recording, and cuts a random window. Each clip trains only
 its own head. Every source is evaluated on its own held-out split, so the numbers
 compare directly with the single-task results (train_ast.py, baseline_rf.py). The
 checkpoint kept is the one with the best mean validation score over the sources.
+Per-clip test predictions go to predictions.csv, to see which clips each head misses.
 
     python train_multitask.py --manifest manifest.csv --out /content/drive/MyDrive/rail-v-runs/multitask
 """
 
 import argparse
+import csv
 import json
 import math
+import pickle
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -45,7 +55,7 @@ from common import (augment, confusion, load_recording, macro_report, positive_l
                     read_manifest, resample, speed_crop, tune_threshold, windows)
 from train_ast import FS, build_model, n_frames, spec_augment
 
-HEAD_OF = {"acoustic_track_pk": "surface", "corrugation_mic": "corrugation",
+HEAD_OF = {"acoustic_track_pk": "surface", "corrugation_mic": "corr_mic",
            "corrugation_axle": "corrugation", "vivid_joint": "joint"}
 
 
@@ -165,12 +175,13 @@ def main():
     ap.add_argument("--out", type=Path, default=Path("runs/multitask"))
     ap.add_argument("--sources", default=",".join(HEAD_OF), help="comma-separated manifest sources")
     ap.add_argument("--head-weights", default="", help="e.g. surface=1,corrugation=2,joint=1")
-    ap.add_argument("--accel-as", type=int, default=8000, help="treat accelerometer samples as this rate (Hz)")
-    ap.add_argument("--window", type=float, default=1.0, help="seconds per window (after accel speed-up)")
-    ap.add_argument("--hop", type=float, default=0.5)
-    ap.add_argument("--epochs", type=int, default=15)
-    ap.add_argument("--steps-per-epoch", type=int, default=3000, help="training windows per epoch")
-    ap.add_argument("--patience", type=int, default=4)
+    ap.add_argument("--accel-as", type=int, default=4000, help="treat accelerometer samples as this rate (Hz)")
+    ap.add_argument("--window", type=float, default=2.0, help="seconds per window (after accel speed-up)")
+    ap.add_argument("--hop", type=float, default=1.0)
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--steps-per-epoch", type=int, default=8000, help="training windows per epoch")
+    ap.add_argument("--patience", type=int, default=5)
+    ap.add_argument("--cache", type=Path, help="file holding the decoded signals (made on the first run)")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=2e-5)
     ap.add_argument("--head-lr", type=float, default=1e-3)
@@ -201,13 +212,31 @@ def main():
     heads = {h: sorted(v) for h, v in heads.items()}
     print("heads: " + "; ".join(f"{h} {labels}" for h, labels in heads.items()))
 
-    print(f"loading {len(rows)} recordings ...")
+    def key(r):
+        return f"{r['path']}|{args.accel_as}" if r["sensor"] == "accel" else r["path"]
+
+    cached = {}
+    if args.cache and args.cache.exists():
+        with open(args.cache, "rb") as f:
+            cached = pickle.load(f)
+    todo = [r for r in rows if key(r) not in cached]
+    print(f"loading {len(rows)} recordings ({len(rows) - len(todo)} from cache) ...")
     t0 = time.time()
+    for r in todo:
+        cached[key(r)] = load_signal(r, args.accel_as).astype(np.float16)
+    print(f"  done in {time.time() - t0:.0f} s")
+    if args.cache and todo:
+        args.cache.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.cache, "wb") as f:
+            pickle.dump(cached, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"  saved signals to {args.cache}")
     data = defaultdict(lambda: defaultdict(list))  # data[source][split] = [(signal, target)]
+    paths = defaultdict(lambda: defaultdict(list))
     for r in rows:
         h = HEAD_OF[r["source"]]
-        data[r["source"]][r["split"]].append((load_signal(r, args.accel_as), heads[h].index(r["label"])))
-    print(f"  done in {time.time() - t0:.0f} s")
+        data[r["source"]][r["split"]].append((cached[key(r)].astype(np.float32), heads[h].index(r["label"])))
+        paths[r["source"]][r["split"]].append(r["path"])
+    del cached
     for s in sources:
         print(f"  {s}: " + ", ".join(f"{k} {len(v)}" for k, v in sorted(data[s].items())))
 
@@ -283,6 +312,7 @@ def main():
             break
 
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device)["state_dict"])
+    pred_rows = []
     results = {"config": {k: str(v) for k, v in vars(args).items()}, "heads": heads,
                "best_epoch": best_epoch, "best_val_mean": best, "history": history, "test": {}}
     print(f"\nbest epoch {best_epoch} (mean val {best:.3f})")
@@ -299,13 +329,24 @@ def main():
             entry["threshold"] = t
             entry["test_tuned"] = public(evaluate(model, dl, h, heads[h], nr, device, threshold=t))
         results["test"][s] = entry
+        labels = heads[h]
+        kp = labels.index(positive_label(labels)) if "threshold" in entry else None
+        for path, t, p in zip(paths[s]["test"], res["_true"], res["_prob"]):
+            pred = (kp if p[kp] >= entry["threshold"] else 1 - kp) if kp is not None else int(p.argmax())
+            pred_rows.append({"source": s, "path": path, "label": labels[t], "pred": labels[pred],
+                              **{f"p_{c}": round(float(v), 4) for c, v in zip(labels, p)}})
         main_res = entry.get("test_tuned", entry["test"])
         tag = " (val-tuned threshold)" if "test_tuned" in entry else ""
         print(f"\n[{s}] head {h}{tag}: TEST clip acc {main_res['clip']['accuracy']}  "
               f"macro-F1 {main_res['clip']['macro_f1']}  recall {main_res['clip']['recall']}")
         print(main_res["clip_confusion"])
     (args.out / "results.json").write_text(json.dumps(results, indent=2))
-    print(f"\nsaved {args.out / 'best.pt'} and results.json")
+    fields = ["source", "path", "label", "pred"] + sorted({k for r in pred_rows for k in r if k.startswith("p_")})
+    with open(args.out / "predictions.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        w.writerows(pred_rows)
+    print(f"\nsaved {args.out / 'best.pt'}, results.json and predictions.csv")
 
 
 if __name__ == "__main__":
