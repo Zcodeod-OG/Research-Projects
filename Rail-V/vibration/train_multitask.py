@@ -30,7 +30,10 @@ Each batch picks a head (equal shares by default, --head-weights to change), the
 class (balanced), then a recording, and cuts a random window. Each clip trains only
 its own head. Every source is evaluated on its own held-out split, so the numbers
 compare directly with the single-task results (train_ast.py, baseline_rf.py). The
-checkpoint kept is the one with the best mean validation score over the sources.
+checkpoint kept is the one whose weakest source scores best on validation (--select
+min); picking by the mean let one head sit at chance while the others carried it.
+The surface head gets twice the batches by default: its wheel-burn class was the
+first to collapse when it had to share training with three other heads.
 Per-clip test predictions go to predictions.csv, to see which clips each head misses.
 
     python train_multitask.py --manifest manifest.csv --out /content/drive/MyDrive/rail-v-runs/multitask
@@ -174,7 +177,9 @@ def main():
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=Path("runs/multitask"))
     ap.add_argument("--sources", default=",".join(HEAD_OF), help="comma-separated manifest sources")
-    ap.add_argument("--head-weights", default="", help="e.g. surface=1,corrugation=2,joint=1")
+    ap.add_argument("--head-weights", default="surface=2", help="batch share per head, e.g. surface=2,joint=1 (others 1)")
+    ap.add_argument("--select", choices=["min", "mean"], default="min",
+                    help="keep the checkpoint with the best weakest-source (min) or mean val score")
     ap.add_argument("--accel-as", type=int, default=4000, help="treat accelerometer samples as this rate (Hz)")
     ap.add_argument("--window", type=float, default=2.0, help="seconds per window (after accel speed-up)")
     ap.add_argument("--hop", type=float, default=1.0)
@@ -299,12 +304,15 @@ def main():
             h = HEAD_OF[s]
             scores[s] = tuned(evaluate(model, dl, h, heads[h], nr, device), heads[h])[1]
         mean = float(np.mean(list(scores.values()))) if scores else 0.0
+        worst = float(min(scores.values())) if scores else 0.0
+        score = worst if args.select == "min" else mean
         history.append({"epoch": epoch, "train_loss": round(total / max(1, len(train_dl)), 4),
-                        "val": {k: round(v, 4) for k, v in scores.items()}, "val_mean": round(mean, 4)})
+                        "val": {k: round(v, 4) for k, v in scores.items()}, "val_mean": round(mean, 4),
+                        "val_min": round(worst, 4)})
         print(f"epoch {epoch}: loss {history[-1]['train_loss']}  val " +
-              "  ".join(f"{k} {v:.3f}" for k, v in scores.items()) + f"  mean {mean:.3f}  ({time.time() - t0:.0f} s)")
-        if mean > best:
-            best, best_epoch = mean, epoch
+              "  ".join(f"{k} {v:.3f}" for k, v in scores.items()) + f"  mean {mean:.3f}  min {worst:.3f}  ({time.time() - t0:.0f} s)")
+        if score > best:
+            best, best_epoch = score, epoch
             torch.save({"state_dict": model.state_dict(), "heads": heads, "head_of": HEAD_OF,
                         "window_s": args.window, "accel_as": args.accel_as}, args.out / "best.pt")
         elif epoch - best_epoch >= args.patience:
@@ -314,8 +322,8 @@ def main():
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device)["state_dict"])
     pred_rows = []
     results = {"config": {k: str(v) for k, v in vars(args).items()}, "heads": heads,
-               "best_epoch": best_epoch, "best_val_mean": best, "history": history, "test": {}}
-    print(f"\nbest epoch {best_epoch} (mean val {best:.3f})")
+               "best_epoch": best_epoch, "select": args.select, "best_val_score": best, "history": history, "test": {}}
+    print(f"\nbest epoch {best_epoch} ({args.select} val {best:.3f})")
     for s in sources:
         h = HEAD_OF[s]
         dl, nr = loader(s, "test")
