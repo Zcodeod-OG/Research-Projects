@@ -6,6 +6,8 @@ model has to beat this number on the same grouped split to be worth its cost.
 
 Reports window-level and clip-level scores (clip = average of its windows'
 probabilities) on the held-out test split, and optionally grouped 5-fold CV.
+The final forest (trained on train+val, with the validation-tuned threshold for a
+two-class task) is saved as model.joblib for predict.py.
 
     python baseline_rf.py --manifest manifest.csv --out runs/baseline_rf
 """
@@ -14,6 +16,7 @@ import argparse
 import json
 from pathlib import Path
 
+import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
@@ -127,6 +130,9 @@ def main():
 
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "results.json").write_text(json.dumps(results, indent=2))
+    joblib.dump({"clf": clf, "labels": labels, "fs": args.fs, "window": args.window, "hop": args.hop,
+                 "features": args.features, "positive": pos, "threshold": results.get("threshold")},
+                args.out / "model.joblib")
     t = results["test"]
     print(f"\nTEST  window acc {t['window']['accuracy']}  macro-F1 {t['window']['macro_f1']}")
     print(f"TEST  clip   acc {t['clip']['accuracy']}  macro-F1 {t['clip']['macro_f1']}  "
@@ -139,7 +145,7 @@ def main():
         print(tt["clip_confusion"])
     if "cv_clip_macro_f1" in results:
         print(f"CV clip macro-F1 {results['cv_clip_macro_f1']['mean']} ± {results['cv_clip_macro_f1']['std']}")
-    print(f"saved {args.out / 'results.json'}")
+    print(f"saved {args.out / 'results.json'} and model.joblib")
 
 
 if __name__ == "__main__":
