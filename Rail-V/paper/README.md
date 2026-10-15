@@ -1,6 +1,7 @@
 # Rail-V paper
 
-LaTeX draft of the Rail-V paper (IEEE conference format, `IEEEtran`). It builds on
+LaTeX draft of the Rail-V paper (IEEE conference format, `IEEEtran`); `rail-v-paper.pdf` is
+the compiled copy. It builds on
 Overleaf as is: upload `main.tex`, `refs.bib` and the `figures/` folder.
 
 ## Adding the figures
