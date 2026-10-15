@@ -12,13 +12,8 @@ Overleaf as is: upload `main.tex`, `refs.bib` and the `figures/` folder.
 
     scores.pdf  confusion.pdf  training_curves.pdf  multitask_runs.pdf
 
-Until they are there, the PDF shows a labelled box in place of each figure.
-
-## Still to fill in
-
-Everything in red in the PDF (`\todo{...}` in `main.tex`): author names and
-affiliations, and the Rail-VIVID stretch count and chance rate from `summary.json`
-(key `vivid_detector`). Delete the `\todo` macro before submitting.
+They are already here for the current draft. If a file is missing, the PDF shows a labelled
+box in its place.
 
 ## Building locally
 

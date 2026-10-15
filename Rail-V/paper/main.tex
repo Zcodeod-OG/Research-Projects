@@ -13,8 +13,6 @@
 \newcommand{\fig}[2]{%
   \IfFileExists{figures/#2}{\includegraphics[width=#1]{figures/#2}}%
   {\fbox{\parbox[c][3cm][c]{0.9#1}{\centering\small figures/\detokenize{#2}\par (copy in from paper\_results.zip)}}}}
-% Notes for the authors; delete before submission.
-\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
 
 \begin{document}
 
@@ -22,10 +20,10 @@
 
 \author{
 \IEEEauthorblockN{Amarsh N Choudhary}
-\IEEEauthorblockA{\textit{\todo{Department}} \\
-\textit{\todo{Institution}}\\
-\todo{City, Country} \\
-\todo{email}}
+\IEEEauthorblockA{\textit{Department of Mechanical Engineering} \\
+\textit{Indian Institute of Technology Delhi}\\
+New Delhi, India \\
+me2252094@iitd.ac.in}
 }
 
 \maketitle
@@ -175,11 +173,17 @@ positions. We project every sample onto the arc length along a reference trace o
 compute, per metre and per run, band powers and slow-signal features for each channel. Joints
 did not appear as isolated impacts on these sensors. What did repeat in every run were stretches
 of track, typically 15--30\,m long, with distinctly higher 500--990\,Hz vibration on two channels.
-Keeping only features whose per-metre profile correlates between runs, with no use of the
-labels, a step detector finds these stretches. All nine surveyed anomalies lie inside one of
-them; a few stretches contain no listed anomaly and may be unlisted features of the track
-\todo{give the final count of stretches and the chance rate from summary.json, key
-vivid\_detector}.
+Along the track we found 14 such stretches; each of the nine surveyed anomalies lies inside one
+of them, and the other five stretches hold no listed anomaly. Those five may be features of the
+track that the survey does not list.
+
+To find the stretches without using the labels, we keep only features whose per-metre profile
+correlates between runs. Three features pass this test: 500--990\,Hz band power on two channels and
+the slow ($<2$\,Hz) signal on a third. A step detector then marks places where the median of these
+features over the next 6\,m differs from the previous 6\,m by more than four noise units. It
+returns 30 candidate sites. Every one of the nine surveyed anomalies has a site within 15\,m, and
+15 sites lie away from any listed anomaly. Since the survey lists only nine points on 1.4\,km of
+track, we read this as a high-recall detector of track features rather than a precise one.
 
 We then label a 20\,m clip as \emph{joint} when its centre is within 6\,m of a surveyed anomaly,
 and as \emph{normal} when it is at least 25\,m from every anomaly and from every detected
@@ -251,15 +255,17 @@ highest seed.}
 \end{figure}
 
 \textit{Rail surface.} AST reaches 0.983 and 1.000 on its two seeds, above the forest
-($0.958$), so the predictor uses AST. Window length matters here: in the shared-model runs
+($0.958$), so the predictor uses AST. Over both seeds it misclassified only two of 78 wheel-burn
+clips, both as normal track, and none of the others. Window length matters here: in the shared-model runs
 (Section~\ref{sec:multitask}), 1\,s windows were too short to tell wheel burns from normal track,
 whereas the separate AST uses 5\,s windows.
 
 \textit{Corrugation at an unseen speed.} Both sensors detect corrugation on the 75\,km/h test run
 after training on 40 and 50\,km/h. The axle-box forest is the most consistent model in the
-study ($0.92 \pm 0.01$) and finds every corrugated test clip in the last seed (recall 1.00, at
-0.88 recall on normal track). For the microphone, AST is ahead of the forest on average but
-varies more between seeds. In the second seed its validation score peaked after the first epoch
+study ($0.92 \pm 0.01$). It finds every corrugated test clip in all three seeds (recall 1.00),
+at a recall of 0.89 on normal track. For the microphone, AST is ahead of the forest on average but
+varies more between seeds: its recall on corrugated clips is 0.92 in one seed and 0.79 in the
+other, with 0.93 on normal track in both. In both seeds its validation score was highest after the first epoch
 and then fell until early stopping (Fig.~\ref{fig:curves}), so it overfits quickly on this small
 set.
 
@@ -268,7 +274,7 @@ predicted every test clip as normal (macro-F1 0.39); with the threshold tuned on
 run it scored 0.90. Every result here uses the tuned threshold.
 
 \textit{Joints and switches.} This is the weakest task. The forest finds nearly all joint clips
-(recall about 0.96--0.98) but calls a third to half of the normal clips joints (normal recall
+(recall 0.96--0.98) but calls a third to half of the normal clips joints (normal recall
 0.55--0.66; Fig.~\ref{fig:confusion}). AST trained on the same clips did no better in the
 multi-task runs (Section~\ref{sec:multitask}). We think the labels are the limit: a normal clip
 can contain an unlisted feature of the track, and the 6\,m labelling radius around each anomaly
