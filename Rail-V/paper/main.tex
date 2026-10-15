@@ -1,0 +1,379 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+
+% A figure from figures/ if it is there, else a framed placeholder, so the draft
+% compiles before the figures from paper_results.zip are copied in.
+\newcommand{\fig}[2]{%
+  \IfFileExists{figures/#2}{\includegraphics[width=#1]{figures/#2}}%
+  {\fbox{\parbox[c][3cm][c]{0.9#1}{\centering\small figures/\detokenize{#2}\par (copy in from paper\_results.zip)}}}}
+% Notes for the authors; delete before submission.
+\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
+
+\begin{document}
+
+\title{One Predictor for Four Rail Faults from Vibration and Sound Alone}
+
+\author{
+\IEEEauthorblockN{\todo{Author One}}
+\IEEEauthorblockA{\textit{\todo{Department}} \\
+\textit{\todo{Institution}}\\
+\todo{City, Country} \\
+\todo{email}}
+\and
+\IEEEauthorblockN{\todo{Author Two}}
+\IEEEauthorblockA{\textit{\todo{Department}} \\
+\textit{\todo{Institution}}\\
+\todo{City, Country} \\
+\todo{email}}
+}
+
+\maketitle
+
+\begin{abstract}
+Cameras and track-recording cars are the usual tools for finding rail defects, but sound and
+vibration can be captured with cheap sensors on any train. We build a single fault predictor
+for four rail-fault tasks using only microphone and accelerometer data from three public
+datasets: rail-surface faults (superelevation and wheel burns), rail corrugation heard by an
+in-cabin microphone, corrugation felt at the axle box, and rail joints and switches. For each
+task we compare a random forest on spectral features with a fine-tuned Audio Spectrogram
+Transformer (AST), and the predictor uses whichever is better. Clips are cut on a distance
+grid rather than in time, so a fault produces the same pattern at any train speed. Over
+repeated training runs the predictor reaches a test macro-F1 of $0.99$ on rail-surface faults,
+$0.92$ for corrugation from the axle box and $0.89$ from the microphone, both measured at a train
+speed not seen in training, and $0.81$ on joints and switches. Labels for the joint task come
+from an unsupervised detector that places all nine surveyed joints and switches of the
+Rail-VIVID dataset inside repeatable stretches of high vibration. We also report a negative
+result: a single shared AST with one output head per fault was unstable across four training
+runs, and no run matched the separate models on more than one task.
+\end{abstract}
+
+\begin{IEEEkeywords}
+railway track monitoring, fault detection, vibration, acoustic analysis, audio spectrogram
+transformer, rail corrugation, multi-task learning
+\end{IEEEkeywords}
+
+%% ------------------------------------------------------------------------------------------
+\section{Introduction}
+
+Rail defects such as corrugation, wheel burns, worn joints and poorly set superelevation raise
+noise, wear and maintenance cost, and some lead to derailment if they go unnoticed. Most
+inspection relies on dedicated measurement trains or on cameras, which are costly to run often.
+Microphones and accelerometers are cheap and can ride on ordinary service trains, so the signal
+they record could flag faults between scheduled inspections.
+
+Public labelled data for this is scarce and fragmented. Each available dataset covers one line,
+one vehicle and one or two kinds of fault, recorded with different sensors at different
+sampling rates. This paper asks how far one can get with only that public data and only
+vibration and sound, with no images.
+
+Our contributions are:
+\begin{itemize}
+  \item One predictor that scores four rail-fault tasks from vibration and sound, assembled from
+        the best model per task, with results averaged over repeated training runs on grouped
+        splits that keep every recording (or run) in a single split.
+  \item Distance-normalised clips: each recording is resampled onto a distance grid at a fixed
+        reference speed, so a periodic fault such as corrugation keeps the same frequency at any
+        train speed. With this, corrugation is detected on a run at a speed not seen in
+        training.
+  \item An unsupervised way to label joints and switches in Rail-VIVID, whose vibration
+        recordings carry no labels: repeatable stretches of high vibration contain all nine
+        surveyed joints and switches.
+  \item A negative result: a shared multi-task AST was unstable across runs, and no run matched
+        the separate models on more than one task.
+\end{itemize}
+Code to rebuild every result is public (Section~\ref{sec:availability}).
+
+%% ------------------------------------------------------------------------------------------
+\section{Related Work}
+
+\textit{Acoustic track-fault detection.} Shafique et al.~\cite{shafique2021} recorded track sound
+with microphones on a cart on Pakistan Railways and classified normal track, superelevation and
+wheel burns with MFCC features and classical classifiers. We use their data, but evaluate on a
+split grouped by recording so that windows of one recording never sit on both sides of the split.
+
+\textit{Corrugation.} Rail corrugation is a periodic wear pattern on the rail head whose
+wavelength is set by the track and vehicle, so its frequency in the measured signal rises with
+train speed~\cite{grassie1993}. Soto-Ocampo et al.~\cite{soto2025} detect corrugation from
+on-board acoustic measurements with a mathematical method and publish the recordings with the
+corrugated sections they confirmed by inspection~\cite{upmcorrugation}. We use these recordings
+and the reported sections as labels.
+
+\textit{Rail-VIVID.} Ma et al.~\cite{ma2026railvivid} released synchronised accelerometer, camera
+and GNSS data from twenty runs over the same 1.4\,km of track, with nine surveyed anomalies
+(rail joints and switch points) given by position. We use only the vibration data.
+
+\textit{Pretrained audio models.} The Audio Spectrogram Transformer (AST)~\cite{gong2021ast},
+pretrained on AudioSet~\cite{gemmeke2017audioset}, and CNNs such as PANNs~\cite{kong2020panns} are
+strong starting points for small sound-classification datasets. We fine-tune AST.
+
+\textit{Multi-task learning.} Sharing one encoder across tasks can help or hurt depending on
+which tasks are trained together~\cite{standley2020}. Our shared model is an example of the
+latter.
+
+%% ------------------------------------------------------------------------------------------
+\section{Data}
+\label{sec:data}
+
+Table~\ref{tab:data} summarises the three datasets and the four tasks drawn from them.
+
+\begin{table*}[t]
+\centering
+\caption{Datasets and tasks. Every split is grouped, so all clips from one recording (or one
+run) stay in the same split. Clip counts are after cutting.}
+\label{tab:data}
+\begin{tabular}{llllrrl}
+\toprule
+Task & Dataset & Sensor & Classes & Clips & Test & Split grouped by \\
+\midrule
+Rail surface       & Pakistan Railways~\cite{shafique2021} & microphone, 16\,kHz & normal / superelev. / wheel burn & 720 & 119 & recording block \\
+Corrugation (mic)  & UPM corrugation~\cite{upmcorrugation} & cabin microphone, 16\,kHz & normal / corrugated & 694 & 174 & run (speed) \\
+Corrugation (axle) & UPM corrugation~\cite{upmcorrugation} & axle-box accel., 4\,kHz & normal / corrugated & 694 & 174 & run (speed) \\
+Joint / switch     & Rail-VIVID~\cite{ma2026railvivid}     & accel., 2\,kHz & normal / joint & 2831 & 658 & repeat \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\textit{Rail surface.} 720 clips of 17\,s (240 per class) recorded at 22.05\,kHz and resampled to
+16\,kHz. Recordings whose file numbers fall in the same block of ten are grouped together,
+since neighbouring recordings may come from the same stretch of track; groups are split
+70/15/15 within each class (481/120/119 clips).
+
+\textit{Corrugation.} Four runs of an instrumented train over the same 2.4\,km at 40, 50, 60 and
+75\,km/h. The recordings carry kilometre positions but no labels; we label as \emph{corrugated}
+any clip lying at least 75\% inside one of the two sections reported as severely corrugated
+in~\cite{soto2025} (km 4.855--4.914 and 5.239--5.326), and as \emph{normal} any clip lying at
+least 20\,m from both. Clips in between are dropped. The 40 and 50\,km/h runs are used for
+training, 60\,km/h for validation and 75\,km/h for testing, so every test score is measured at a
+speed the model never saw. The microphone and axle-box signals are kept as separate tasks.
+Since the corrugated track is only about 146\,m long, corrugated clips overlap (2\,m hop); the
+test run has 62 corrugated and 112 normal clips.
+
+\textit{Joints and switches.} Rail-VIVID provides 20 runs (five speed and direction settings,
+four repeats each) of six accelerometers at 2\,kHz with GNSS. Section~\ref{sec:vivid} explains
+how we label it. We keep the two channels whose vibration repeats between runs and export them
+as separate clips of the same group. Repeats 1--2 are used for training, 3 for validation and 4
+for testing (470 joint and 188 normal test clips).
+
+%% ------------------------------------------------------------------------------------------
+\section{Method}
+
+\subsection{Distance-normalised clips}
+A corrugation wavelength $\lambda$ produces a tone at $f = v/\lambda$, so the same defect sounds
+different at each train speed $v$. Before cutting clips, we resample every run onto a uniform
+distance grid using its position record, as if the train had always run at a reference speed
+$v_\mathrm{ref}$. A clip is then a fixed length of track (20\,m), and a defect produces the same
+frequency at any speed. We use $v_\mathrm{ref}=20$\,m/s for the UPM data (a 20\,m clip lasts 1\,s)
+and $6.5$\,m/s for Rail-VIVID, whose runs are between 5 and 8.4\,m/s. An earlier version that cut
+clips in time predicted every 75\,km/h test clip as normal; with distance normalisation the same
+models detect it.
+
+\subsection{Labelling joints and switches without labels}
+\label{sec:vivid}
+The Rail-VIVID vibration files have no per-sample labels; the nine anomalies are given as GNSS
+positions. We project every sample onto the arc length along a reference trace of the track and
+compute, per metre and per run, band powers and slow-signal features for each channel. Joints
+did not appear as isolated impacts on these sensors. What did repeat in every run were stretches
+of track, typically 15--30\,m long, with distinctly higher 500--990\,Hz vibration on two channels.
+Keeping only features whose per-metre profile correlates between runs, with no use of the
+labels, a step detector finds these stretches. All nine surveyed anomalies lie inside one of
+them; a few stretches contain no listed anomaly and may be unlisted features of the track
+\todo{give the final count of stretches and the chance rate from summary.json, key
+vivid\_detector}.
+
+We then label a 20\,m clip as \emph{joint} when its centre is within 6\,m of a surveyed anomaly,
+and as \emph{normal} when it is at least 25\,m from every anomaly and from every detected
+stretch that holds none (these may be unlisted joints, so they are left out rather than guessed).
+Stretches where a channel is stuck at a constant value are skipped. This gives 1995 joint and 836
+normal clips.
+
+\subsection{Models}
+\textit{Random forest.} Each window is described by 137 features: the mean and standard
+deviation of 20 MFCCs~\cite{davis1980} and their deltas, statistics of RMS level, spectral
+centroid, bandwidth and roll-off, and 48 log-spaced Welch~\cite{welch1967} band powers relative
+to their mean plus the overall level. The band powers keep narrow spectral peaks such as a
+corrugation tone, which MFCC means tend to smear. A forest of 400 trees with balanced class
+weights~\cite{breiman2001} is trained on 1\,s windows with 0.5\,s hop.
+
+\textit{AST.} We fine-tune AST pretrained on AudioSet~\cite{gong2021ast,gemmeke2017audioset}. Its
+position embeddings are cut to the window length (5\,s for rail surface, 1\,s for microphone
+corrugation) rather than padding to 10\,s. Each epoch draws eight random windows per recording
+with class-balanced sampling, plus speed perturbation ($\pm 15\%$), random gain, additive noise at
+10--30\,dB SNR, and SpecAugment masks~\cite{park2019specaugment}. Training uses AdamW with learning
+rates of $2\times10^{-5}$ for the encoder and $10^{-3}$ for the head, a cosine schedule with 10\%
+warm-up, label smoothing 0.1, at most 15 epochs, and early stopping after 4 epochs without
+validation gain. The checkpoint with the best validation macro-F1 is kept.
+
+\subsection{Clip scores and decision threshold}
+A clip's class probabilities are the mean over its windows. For the two-class tasks, the
+decision threshold on the fault probability is chosen to maximise macro-F1 on the validation
+split; with few fault clips, the default 0.5 threshold can miss the fault class entirely. All
+reported scores are clip-level test macro-F1 with that tuned threshold, or argmax for the
+three-class rail-surface task.
+
+\subsection{The predictor}
+The predictor loads one model per task, the AST or forest that scored best, and returns a
+decision and class probabilities for each task the input sensor supports: microphone clips are
+scored for rail-surface faults and microphone corrugation, accelerometer clips for axle-box
+corrugation and joints. Models are trained on separate datasets, so each task only compares a
+fault with normal track recorded the same way.
+
+%% ------------------------------------------------------------------------------------------
+\section{Results}
+
+Every model was trained with different random seeds (three seeds for the forests, two for the
+AST models) on the same fixed splits. Table~\ref{tab:main} gives the mean and standard deviation
+of the test macro-F1 and Fig.~\ref{fig:scores} shows the spread.
+
+\begin{table}[t]
+\centering
+\caption{Test macro-F1, mean $\pm$ standard deviation over seeds (3 for random forests, 2 for
+AST). The last column is the model the predictor uses.}
+\label{tab:main}
+\begin{tabular}{lccc}
+\toprule
+Task & Forest & AST & Predictor uses \\
+\midrule
+Rail surface       & 0.958 $\pm$ 0.009 & \textbf{0.992 $\pm$ 0.012} & AST \\
+Corrugation (axle) & \textbf{0.924 $\pm$ 0.009} & -- & Forest \\
+Corrugation (mic)  & 0.869 $\pm$ 0.028 & \textbf{0.893 $\pm$ 0.038} & AST \\
+Joint / switch     & \textbf{0.809 $\pm$ 0.020} & -- & Forest \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\fig{\columnwidth}{scores.pdf}
+\caption{Test macro-F1 per task. Bars are means over seeds; whiskers span the lowest and
+highest seed.}
+\label{fig:scores}
+\end{figure}
+
+\textit{Rail surface.} AST reaches 0.983 and 1.000 on its two seeds, above the forest
+($0.958$), so the predictor uses AST. Window length matters here: in the shared-model runs
+(Section~\ref{sec:multitask}), 1\,s windows were too short to tell wheel burns from normal track,
+whereas the separate AST uses 5\,s windows.
+
+\textit{Corrugation at an unseen speed.} Both sensors detect corrugation on the 75\,km/h test run
+after training on 40 and 50\,km/h. The axle-box forest is the most consistent model in the
+study ($0.92 \pm 0.01$) and finds every corrugated test clip in the last seed (recall 1.00, at
+0.88 recall on normal track). For the microphone, AST is ahead of the forest on average but
+varies more between seeds. In the second seed its validation score peaked after the first epoch
+and then fell until early stopping (Fig.~\ref{fig:curves}), so it overfits quickly on this small
+set.
+
+\textit{Thresholds matter.} With the default 0.5 threshold, the third microphone forest
+predicted every test clip as normal (macro-F1 0.39); with the threshold tuned on the validation
+run it scored 0.90. Every result here uses the tuned threshold.
+
+\textit{Joints and switches.} This is the weakest task. The forest finds nearly all joint clips
+(recall about 0.96--0.98) but calls a third to half of the normal clips joints (normal recall
+0.55--0.66; Fig.~\ref{fig:confusion}). AST trained on the same clips did no better in the
+multi-task runs (Section~\ref{sec:multitask}). We think the labels are the limit: a normal clip
+can contain an unlisted feature of the track, and the 6\,m labelling radius around each anomaly
+is our choice, not a measured extent of the joint.
+
+\begin{figure*}[t]
+\centering
+\fig{\textwidth}{confusion.pdf}
+\caption{Test confusion matrices of the model the predictor uses for each task, summed over
+seeds. Colour is the share of each true class; numbers are clip counts.}
+\label{fig:confusion}
+\end{figure*}
+
+\begin{figure}[t]
+\centering
+\fig{\columnwidth}{training_curves.pdf}
+\caption{Validation macro-F1 per epoch of the two AST models, one line per seed.}
+\label{fig:curves}
+\end{figure}
+
+%% ------------------------------------------------------------------------------------------
+\section{A Shared Model Did Not Help}
+\label{sec:multitask}
+
+Our first design was one shared AST encoder with a small output head per task, trained on all
+four tasks at once. Each head compares a fault only with normal track from its own dataset, so
+the model cannot score well by recognising which dataset a clip came from. Accelerometer signals
+were treated as if sampled at 4\,kHz so that their content falls within AST's frequency range
+while a clip stays longer than the window. Each batch picked a task, then a class, then a
+recording.
+
+Over four runs we changed the window length (1\,s to 2\,s), the accelerometer speed-up, the
+training length, gave the microphone corrugation its own head, weighted the rail-surface task
+twice, and kept the checkpoint whose weakest task scored best on validation rather than the
+best mean. Only one run matched a separate model on any task (rail surface in run 2), and in that same run
+microphone corrugation fell to 0.75 (Table~\ref{tab:mt}, Fig.~\ref{fig:mt}). The rail-surface task was the most fragile: in runs 3 and 4 the model all but
+stopped predicting wheel burns, and macro-F1 fell below 0.6. When axle and microphone
+corrugation shared one head, the microphone score dropped as the axle score rose. The joint task
+stayed at 0.66--0.68 in every run, below the forest.
+
+\begin{table}[t]
+\centering
+\caption{Test macro-F1 of the shared multi-task model in four runs, against the separate model
+the predictor uses (mean over seeds).}
+\label{tab:mt}
+\begin{tabular}{lccccc}
+\toprule
+Task & Separate & Run 1 & Run 2 & Run 3 & Run 4 \\
+\midrule
+Rail surface       & \textbf{0.99} & 0.76 & \textbf{0.99} & 0.56 & 0.59 \\
+Corrugation (axle) & \textbf{0.92} & 0.83 & 0.91 & 0.88 & 0.86 \\
+Corrugation (mic)  & \textbf{0.89} & 0.85 & 0.75 & 0.82 & 0.88 \\
+Joint / switch     & \textbf{0.81} & 0.67 & 0.68 & 0.66 & 0.68 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[t]
+\centering
+\fig{\textwidth}{multitask_runs.pdf}
+\caption{Test macro-F1 of each shared-model run (solid) against the separate model the
+predictor uses (dashed).}
+\label{fig:mt}
+\end{figure*}
+
+With datasets this small and this different, the tasks compete for the shared encoder rather
+than help each other. Separate models are also simpler to retrain one at a time when new data
+arrives for one fault, which is why we package them as one predictor instead.
+
+%% ------------------------------------------------------------------------------------------
+\section{Limitations}
+
+Each dataset covers one line, one vehicle and one sensor setup, so none of these scores shows
+that a model transfers to other track or other trains. The corrugation labels mark only the two
+sections reported as severely corrugated; ``normal'' means not reported as corrugated rather than
+inspected and clean. The joint labels come from surveyed positions and an unsupervised
+detector, and joint scores are the weakest in the study. The AST models were trained with two
+seeds rather than three because of limited GPU time. Finally, the four tasks come from different
+recordings, so the predictor has not been evaluated on a single recording that contains several
+kinds of fault.
+
+%% ------------------------------------------------------------------------------------------
+\section{Conclusion}
+
+Public vibration and sound data is enough to build a working predictor for four rail-fault
+tasks, reaching test macro-F1 of 0.99 on rail-surface faults, 0.92 and 0.89 for corrugation at an
+unseen speed, and 0.81 on joints. Two simple steps did most of the work: cutting clips by
+distance rather than time, and tuning the decision threshold on validation data. A shared
+multi-task model did not match the separate models. The clearest next steps are better joint
+labels, recordings from more lines and vehicles, and a test on a train carrying both a
+microphone and accelerometers.
+
+\section*{Data and Code Availability}
+\label{sec:availability}
+All datasets are public~\cite{shafique2021,upmcorrugation,ma2026railvivid}. Code to prepare the
+clips, train every model, rebuild the tables and figures, and run the predictor is at
+\url{https://github.com/Zcodeod-OG/Research-Projects} (folder \texttt{Rail-V/vibration}).
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}
